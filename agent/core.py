@@ -1,7 +1,11 @@
 import logging
 import requests
-import subprocess
-from typing import Optional, Dict, Any
+from typing import Optional
+
+from agent.metrics import fetch_node_load
+from agent.prompts import build_prompt, load_prompt
+from agent.tools import execute_mgrctl_inspection
+
 logger = logging.getLogger(__name__)
 
 _GEMINI_URL = (
@@ -9,15 +13,7 @@ _GEMINI_URL = (
     "/gemini-2.5-flash:generateContent"
 )
 
-_SYSTEM_PROMPT = (
-    "You are an expert SUSE Linux System Administrator with deep knowledge of the "
-    "Uyuni management platform and Salt configuration management. "
-    "Analyze the following raw terminal output from a system experiencing high CPU load. "
-    "Provide: (1) a concise Root Cause Analysis identifying the most likely cause, "
-    "(2) the specific process(es) responsible including PID and name, and "
-    "(3) concrete remediation steps an operator should take immediately. "
-    "Be precise, technical, and actionable. Keep your response under 200 words."
-)
+_SYSTEM_PROMPT = load_prompt("system_prompt.md")
 
 
 class UyuniAIAgent:
@@ -40,49 +36,12 @@ class UyuniAIAgent:
         self.threshold = threshold
         self._llm_api_key: Optional[str] = llm_api_key
 
-    def fetch_node_load(self) -> Optional[float]:
-        """Queries Prometheus for the node_load1 metric."""
-        query_url = f"{self.prometheus_url}/api/v1/query"
-        params = {"query": "node_load1"}
-
-        try:
-            response = requests.get(query_url, params=params, timeout=5)
-            response.raise_for_status()
-            data: Dict[str, Any] = response.json()
-
-            results = data.get("data", {}).get("result", [])
-            if results:
-                return float(results[0]["value"][1])
-
-            logger.warning("No metric data found for node_load1.")
-            return None
-
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Prometheus connection error: {e}")
-            return None
-
-    def execute_mgrctl_inspection(self) -> str:
-        """Executes a diagnostic Salt command on the minion via mgrctl."""
-        logger.info(f"Gathering live system state from {self.minion_id} via mgrctl...")
-
-        cmd = [
-            "mgrctl",
-            "exec",
-            f"salt '{self.minion_id}' cmd.run 'ps -eo pid,ppid,cmd,%mem,%cpu --sort=-%cpu | head -n 10'",
-        ]
-
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            return result.stdout
-        except FileNotFoundError:
-            logger.warning("'mgrctl' binary not found. Returning simulated fallback data for PoC.")
-            return "SIMULATED_OUTPUT: High CPU usage detected on /usr/lib/venv-salt-minion"
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Command execution failed: {e.stderr}")
-            return f"ERROR: {e.stderr}"
-
-    def analyze_with_llm(self, raw_output: str) -> str:
+    def analyze_with_llm(self, raw_output: str, scenario: str = None) -> str:
         """Sends raw diagnostic output to Gemini and returns a human-readable RCA.
+
+        When *scenario* is provided (e.g. ``"high_cpu"``), the corresponding
+        scenario template is loaded and interpolated with agent context before
+        being sent as the user message.  Otherwise a plain wrapper is used.
 
         Falls back to returning raw_output unchanged if no API key was configured
         or if the API call fails.
@@ -91,10 +50,20 @@ class UyuniAIAgent:
             logger.warning("LLM_API_KEY not configured. Skipping AI analysis.")
             return raw_output
 
+        if scenario:
+            user_message = build_prompt(scenario, {
+                "minion_id": self.minion_id,
+                "metric_value": "N/A",
+                "threshold": self.threshold,
+                "raw_output": raw_output,
+            })
+        else:
+            user_message = f"--- RAW SYSTEM OUTPUT ---\n{raw_output}\n--- END OUTPUT ---"
+
         try:
             payload = {
                 "system_instruction": {"parts": [{"text": _SYSTEM_PROMPT}]},
-                "contents": [{"parts": [{"text": f"--- RAW SYSTEM OUTPUT ---\n{raw_output}\n--- END OUTPUT ---"}]}],
+                "contents": [{"parts": [{"text": user_message}]}],
             }
             response = requests.post(
                 _GEMINI_URL,
@@ -111,14 +80,14 @@ class UyuniAIAgent:
 
     def run_check_cycle(self) -> bool:
         """Runs a single monitoring and inspection cycle. Returns True if alert triggered."""
-        load = self.fetch_node_load()
+        load = fetch_node_load(self.prometheus_url, self.minion_id)
         if load is not None:
             logger.info(f"Current node_load1: {load}")
             if load > self.threshold:
                 logger.warning(f"ALERT: Load ({load}) exceeds threshold ({self.threshold})!")
-                state = self.execute_mgrctl_inspection()
+                state = execute_mgrctl_inspection(self.minion_id)
                 logger.info(f"System State Gathered:\n{state}")
-                analysis = self.analyze_with_llm(state)
+                analysis = self.analyze_with_llm(state, scenario="high_cpu")
                 logger.info(f"AI Root Cause Analysis:\n{analysis}")
                 return True
         return False

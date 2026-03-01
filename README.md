@@ -18,13 +18,15 @@ sequenceDiagram
     participant L as LLM (Gemini 2.5 Flash)
 
     loop Every 10 seconds
-        A->>P: Fetch `node_load1`
-        P-->>A: Return Load Value
+        A->>P: Fetch metrics (CPU%, Memory%, Disk%, Load)
+        P-->>A: Return Metric Values
 
-        alt Load > Threshold
-            A->>M: Execute `mgrctl exec ps aux...`
+        alt Any metric > Threshold
+            A->>M: Execute inspection tools via mgrctl exec
+            Note right of M: ps, df, du, systemctl,<br/>journalctl
             M-->>A: Return Raw Terminal Output
-            A->>L: Send Output + System Prompt
+            A->>L: Send Output + Scenario-Specific Prompt
+            Note right of L: high_cpu.md / high_memory.md /<br/>disk_full.md
             L-->>A: Return Root Cause Analysis
             A->>A: Log Human-Readable Alert
         end
@@ -33,12 +35,44 @@ sequenceDiagram
 
 ## Features
 
-- **Prometheus Ingestion:** Queries the Prometheus HTTP API (e.g., `node_load1`).
+- **Multi-Metric Prometheus Monitoring:** Queries CPU usage, memory usage, disk usage, and node load via PromQL — not just a single metric.
 - **Threshold Evaluation:** Evaluates anomalies based on configurable thresholds.
-- **mgrctl Orchestration:** Upon anomaly detection, dynamically executes Salt commands on the affected minions (e.g., fetching top CPU-consuming processes) using `mgrctl exec`.
-- **AI Root Cause Analysis:** Sends raw diagnostic output to Gemini 2.5 Flash with a SUSE sysadmin system prompt. Returns a structured RCA identifying the responsible process, root cause, and concrete remediation steps. Falls back gracefully to raw output if no API key is configured.
-- **Enterprise-ready Code:** Fully typed (`typing`), modularized, structured with standard logging, and covered by pytest unit tests.
-- **Secure by Default:** Utilises the official **openSUSE BCI** (Base Container Image) for Python 3.11 to ensure a minimal, secure, and vulnerability-free footprint. The LLM API key is never hardcoded and is redacted from error logs.
+- **mgrctl Inspection Toolkit:** Upon anomaly detection, dynamically executes multiple Salt commands on affected minions via `mgrctl exec`:
+  - Top CPU-consuming processes
+  - Top memory-consuming processes
+  - Disk usage breakdown (`df` + `du`)
+  - Running systemd services
+  - Service journal logs (with input sanitization to prevent command injection)
+- **Scenario-Specific AI Analysis:** Sends raw diagnostic output to Gemini 2.5 Flash with a SUSE sysadmin system prompt and scenario-aware templates (high CPU, high memory, disk full). Returns a structured RCA identifying the responsible process, root cause, and concrete remediation steps. Falls back gracefully to raw output if no API key is configured.
+- **Simulation Mode:** When `mgrctl` is not available (dev/CI), all inspection tools return realistic simulated terminal output so the full pipeline can be demonstrated without a live Uyuni server.
+- **Secure by Default:** Uses the official **openSUSE BCI** (Base Container Image) for Python 3.11. The LLM API key is never hardcoded and is redacted from error logs. Service name inputs are validated against an allowlist pattern to prevent injection.
+- **Comprehensive Test Suite:** 52 unit tests across 4 test files — all external calls (Prometheus, mgrctl, Gemini API) are mocked. No real services or API keys needed.
+
+## Project Structure
+
+```text
+uyuni-ai-agent-poc/
+├── agent/
+│   ├── core.py              # UyuniAIAgent class — orchestrates monitoring + LLM analysis
+│   ├── metrics.py            # Prometheus query functions (CPU, memory, disk, load)
+│   ├── tools.py              # mgrctl inspection tools with simulated fallback
+│   └── prompts/
+│       ├── __init__.py       # load_prompt() and build_prompt() helpers
+│       ├── system_prompt.md  # Base SUSE sysadmin persona for Gemini
+│       ├── high_cpu.md       # Scenario template for CPU anomalies
+│       ├── high_memory.md    # Scenario template for memory anomalies
+│       └── disk_full.md      # Scenario template for disk anomalies
+├── tests/
+│   ├── test_core.py          # Agent delegation and LLM integration tests
+│   ├── test_metrics.py       # Prometheus query tests (mocked HTTP)
+│   ├── test_tools.py         # Inspection tools tests (mocked subprocess)
+│   └── test_prompts.py       # Prompt loading and template interpolation tests
+├── main.py                   # Entry point — reads env vars, runs monitoring loop
+├── Dockerfile                # Production container (openSUSE BCI Python 3.11)
+├── requirements.txt          # requests==2.31.0, pytest==8.0.0
+├── .env.example              # Environment variable reference
+└── .github/workflows/ci.yml  # GitHub Actions CI pipeline
+```
 
 ## Running the PoC
 
@@ -80,3 +114,12 @@ docker run \
   -e LLM_API_KEY="your_gemini_api_key" \
   uyuni-ai-agent-poc
 ```
+
+## Environment Variables
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `PROMETHEUS_URL` | `http://localhost:9090` | Prometheus HTTP API base URL |
+| `MINION_ID` | `myminion.mgr.suse.de` | Salt minion identifier to monitor |
+| `THRESHOLD` | `2.0` | Node load value that triggers inspection |
+| `LLM_API_KEY` | *(none)* | Gemini API key — AI analysis is skipped if not set |
