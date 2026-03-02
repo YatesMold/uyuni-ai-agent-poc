@@ -117,3 +117,53 @@ def test_build_prompt_raises_on_missing_context_key():
             "raw_output": "PID CMD %CPU\n123 python 99.9",
             # missing minion_id, metric_value, threshold
         })
+
+
+# --- Integration: new scenario prompt files exist ---
+
+
+def test_high_apache_load_prompt_exists():
+    """Ensures the shipped high_apache_load.md prompt file is loadable."""
+    result = load_prompt("high_apache_load.md")
+    assert len(result) > 0
+    assert "Apache" in result
+    assert "MaxRequestWorkers" in result
+
+
+def test_postgres_connections_prompt_exists():
+    """Ensures the shipped postgres_connections.md prompt file is loadable."""
+    result = load_prompt("postgres_connections.md")
+    assert len(result) > 0
+    assert "PostgreSQL" in result
+    assert "pg_stat_activity" in result
+
+
+# --- build_prompt for new scenarios ---
+
+
+def test_build_prompt_high_apache_load():
+    result = build_prompt("high_apache_load", {
+        "minion_id": "web01.mgr.suse.de",
+        "metric_value": "160",
+        "threshold": "150",
+        "raw_output": "[error] AH00161: server reached MaxRequestWorkers",
+    })
+    assert "web01.mgr.suse.de" in result
+    assert "160" in result
+    assert "150" in result
+    assert "{minion_id}" not in result
+    assert "--- END OUTPUT ---" in result
+
+
+def test_build_prompt_postgres_connections():
+    result = build_prompt("postgres_connections", {
+        "minion_id": "db01.mgr.suse.de",
+        "metric_value": "120",
+        "threshold": "100",
+        "raw_output": "pid | duration | query | state",
+    })
+    assert "db01.mgr.suse.de" in result
+    assert "120" in result
+    assert "100" in result
+    assert "{minion_id}" not in result
+    assert "--- END OUTPUT ---" in result

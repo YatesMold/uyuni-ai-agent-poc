@@ -6,11 +6,13 @@ from agent.tools import (
     SIMULATED_OUTPUTS,
     _run_mgrctl,
     execute_mgrctl_inspection,
-    get_top_cpu_processes,
-    get_top_memory_processes,
+    get_apache_error_log,
     get_disk_usage_breakdown,
+    get_postgres_slow_queries,
     get_running_services,
     get_service_logs,
+    get_top_cpu_processes,
+    get_top_memory_processes,
 )
 
 
@@ -243,3 +245,61 @@ def test_get_service_logs_accepts_template_unit(mock_run):
     """Template instances like getty@tty1.service must be accepted."""
     output = get_service_logs("test-minion", "getty@tty1.service")
     assert output == SIMULATED_OUTPUTS["journal_errors"]
+
+
+# --- get_apache_error_log ---
+
+
+@patch("agent.tools.subprocess.run")
+def test_get_apache_error_log_success(mock_run):
+    mock_result = MagicMock()
+    mock_result.stdout = "[Mon Jun 02 11:45:03 2025] [mpm_prefork:error] AH00161: server reached MaxRequestWorkers"
+    mock_run.return_value = mock_result
+
+    output = get_apache_error_log("test-minion")
+
+    assert "MaxRequestWorkers" in output
+    mock_run.assert_called_once()
+
+
+@patch("agent.tools.subprocess.run", side_effect=FileNotFoundError)
+def test_get_apache_error_log_fallback(mock_run):
+    output = get_apache_error_log("test-minion")
+
+    assert output == SIMULATED_OUTPUTS["apache_error_log"]
+
+
+@patch("agent.tools.subprocess.run")
+def test_get_apache_error_log_error(mock_run):
+    mock_run.side_effect = subprocess.CalledProcessError(1, "mgrctl", stderr="permission denied")
+    output = get_apache_error_log("test-minion")
+    assert output == "ERROR: permission denied"
+
+
+# --- get_postgres_slow_queries ---
+
+
+@patch("agent.tools.subprocess.run")
+def test_get_postgres_slow_queries_success(mock_run):
+    mock_result = MagicMock()
+    mock_result.stdout = "  pid  |    duration     |  query  |  state\n 12045 | 00:02:34.567891 | SELECT  | active"
+    mock_run.return_value = mock_result
+
+    output = get_postgres_slow_queries("test-minion")
+
+    assert "duration" in output
+    mock_run.assert_called_once()
+
+
+@patch("agent.tools.subprocess.run", side_effect=FileNotFoundError)
+def test_get_postgres_slow_queries_fallback(mock_run):
+    output = get_postgres_slow_queries("test-minion")
+
+    assert output == SIMULATED_OUTPUTS["postgres_slow_queries"]
+
+
+@patch("agent.tools.subprocess.run")
+def test_get_postgres_slow_queries_error(mock_run):
+    mock_run.side_effect = subprocess.CalledProcessError(1, "mgrctl", stderr="connection refused")
+    output = get_postgres_slow_queries("test-minion")
+    assert output == "ERROR: connection refused"

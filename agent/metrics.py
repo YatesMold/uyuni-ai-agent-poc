@@ -72,3 +72,15 @@ def fetch_disk_usage_percent(base_url: str, instance: str) -> Optional[float]:
         f'{{instance="{instance}",mountpoint="/",fstype!="tmpfs"}})'
     )
     return _query_prometheus(base_url, promql)
+
+
+def fetch_apache_workers_busy(base_url: str, instance: str) -> Optional[float]:
+    """Queries Prometheus for the number of busy Apache workers."""
+    promql = f'apache_workers{{state="busy",instance="{instance}"}}'
+    return _query_prometheus(base_url, promql)
+
+
+def fetch_postgres_active_connections(base_url: str, instance: str) -> Optional[float]:
+    """Queries Prometheus for the number of active PostgreSQL connections."""
+    promql = f'pg_stat_activity_count{{state="active",instance="{instance}"}}'
+    return _query_prometheus(base_url, promql)

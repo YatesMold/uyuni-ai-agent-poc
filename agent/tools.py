@@ -61,6 +61,25 @@ SIMULATED_OUTPUTS: Dict[str, str] = {
         "284K\t/home\n"
         "4.8G\t/opt"
     ),
+    "apache_error_log": (
+        "[Mon Jun 02 11:45:03.123456 2025] [mpm_prefork:error] [pid 4521] AH00161: server reached MaxRequestWorkers setting, consider raising the MaxRequestWorkers setting\n"
+        "[Mon Jun 02 11:45:10.654321 2025] [proxy:error] [pid 4522] (111)Connection refused: AH00957: HTTP: attempt to connect to 127.0.0.1:8080 (localhost) failed\n"
+        "[Mon Jun 02 11:45:10.654400 2025] [proxy_http:error] [pid 4522] [client 192.168.1.50:43210] AH01114: HTTP: failed to make connection to backend: localhost\n"
+        "[Mon Jun 02 11:46:01.111111 2025] [ssl:warn] [pid 4500] AH01909: RSA certificate configured for server does not include an ID which matches the server name\n"
+        "[Mon Jun 02 11:47:22.222222 2025] [mpm_prefork:notice] [pid 4500] AH00171: Graceful restart requested, doing restart\n"
+        "[Mon Jun 02 11:47:23.333333 2025] [mpm_prefork:error] [pid 4521] AH00161: server reached MaxRequestWorkers setting, consider raising the MaxRequestWorkers setting\n"
+        "[Mon Jun 02 11:48:00.444444 2025] [core:error] [pid 4530] [client 10.0.0.15:52300] AH00126: Invalid URI in request GET /rhn/manager/api/contentmanagement/projects HTTP/1.1\n"
+        "[Mon Jun 02 11:49:15.555555 2025] [mpm_prefork:error] [pid 4521] AH00161: server reached MaxRequestWorkers setting, consider raising the MaxRequestWorkers setting"
+    ),
+    "postgres_slow_queries": (
+        "  pid  |    duration     |                                    query                                     |        state\n"
+        "-------+-----------------+------------------------------------------------------------------------------+---------------------\n"
+        " 12045 | 00:02:34.567891 | SELECT ro.id, ro.label, ro.name FROM rhnChannel ro WHERE ro.parent_channel   | active\n"
+        " 12102 | 00:01:12.345678 | UPDATE rhnServerAction SET status = 2 WHERE server_id IN (SELECT id FROM r  | active\n"
+        " 12200 | 00:00:45.678901 | SELECT sa.server_id, sa.action_id FROM rhnServerAction sa JOIN rhnAction a  | active\n"
+        " 12305 | 00:00:08.901234 | VACUUM ANALYZE rhnPackage                                                   | active\n"
+        "(4 rows)"
+    ),
     "running_services": (
         "  UNIT                               LOAD   ACTIVE SUB     DESCRIPTION\n"
         "  dbus.service                       loaded active running D-Bus System Message Bus\n"
@@ -178,4 +197,24 @@ def get_service_logs(minion_id: str, service_name: str) -> str:
         minion_id,
         f"journalctl -u {service_name} -n 50 --no-pager",
         "journal_errors",
+    )
+
+
+def get_apache_error_log(minion_id: str) -> str:
+    """Returns the last 50 lines of the Apache error log (raw tail output)."""
+    logger.info(f"Fetching Apache error log from {minion_id}...")
+    return _run_mgrctl(
+        minion_id,
+        "tail -n 50 /var/log/apache2/error_log",
+        "apache_error_log",
+    )
+
+
+def get_postgres_slow_queries(minion_id: str) -> str:
+    """Returns currently running slow PostgreSQL queries (raw psql output)."""
+    logger.info(f"Fetching slow PostgreSQL queries from {minion_id}...")
+    return _run_mgrctl(
+        minion_id,
+        "sudo -u postgres psql -c \"SELECT pid, now() - pg_stat_activity.query_start AS duration, query, state FROM pg_stat_activity WHERE (now() - pg_stat_activity.query_start) > interval '5 seconds' AND state != 'idle' ORDER BY duration DESC;\"",
+        "postgres_slow_queries",
     )

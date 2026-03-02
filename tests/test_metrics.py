@@ -2,10 +2,12 @@ import requests
 from unittest.mock import patch, MagicMock
 
 from agent.metrics import (
+    fetch_apache_workers_busy,
     fetch_node_load,
     fetch_memory_usage_percent,
     fetch_cpu_usage_percent,
     fetch_disk_usage_percent,
+    fetch_postgres_active_connections,
 )
 
 PROMETHEUS_URL = "http://mock-prometheus:9090"
@@ -121,4 +123,52 @@ def test_fetch_disk_usage_percent_empty_result(mock_get):
 def test_fetch_disk_usage_percent_network_failure(mock_get):
     mock_get.side_effect = requests.exceptions.ConnectionError("refused")
     result = fetch_disk_usage_percent(PROMETHEUS_URL, MINION_ID)
+    assert result is None
+
+
+# ── fetch_apache_workers_busy ────────────────────────────────────────────
+
+@patch("agent.metrics.requests.get")
+def test_fetch_apache_workers_busy_happy_path(mock_get):
+    mock_get.return_value = _mock_success()
+    result = fetch_apache_workers_busy(PROMETHEUS_URL, MINION_ID)
+    assert result == 42.5
+    assert isinstance(result, float)
+
+
+@patch("agent.metrics.requests.get")
+def test_fetch_apache_workers_busy_empty_result(mock_get):
+    mock_get.return_value = _mock_empty()
+    result = fetch_apache_workers_busy(PROMETHEUS_URL, MINION_ID)
+    assert result is None
+
+
+@patch("agent.metrics.requests.get")
+def test_fetch_apache_workers_busy_network_failure(mock_get):
+    mock_get.side_effect = requests.exceptions.ConnectionError("refused")
+    result = fetch_apache_workers_busy(PROMETHEUS_URL, MINION_ID)
+    assert result is None
+
+
+# ── fetch_postgres_active_connections ────────────────────────────────────
+
+@patch("agent.metrics.requests.get")
+def test_fetch_postgres_active_connections_happy_path(mock_get):
+    mock_get.return_value = _mock_success()
+    result = fetch_postgres_active_connections(PROMETHEUS_URL, MINION_ID)
+    assert result == 42.5
+    assert isinstance(result, float)
+
+
+@patch("agent.metrics.requests.get")
+def test_fetch_postgres_active_connections_empty_result(mock_get):
+    mock_get.return_value = _mock_empty()
+    result = fetch_postgres_active_connections(PROMETHEUS_URL, MINION_ID)
+    assert result is None
+
+
+@patch("agent.metrics.requests.get")
+def test_fetch_postgres_active_connections_network_failure(mock_get):
+    mock_get.side_effect = requests.exceptions.ConnectionError("refused")
+    result = fetch_postgres_active_connections(PROMETHEUS_URL, MINION_ID)
     assert result is None
