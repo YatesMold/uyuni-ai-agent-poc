@@ -2,6 +2,7 @@ import pytest
 import requests
 from unittest.mock import patch, MagicMock
 from agent.core import UyuniAIAgent
+from agent.evaluator import Anomaly
 
 
 @pytest.fixture
@@ -52,23 +53,30 @@ def test_analyze_with_llm_falls_back_on_api_error(mock_post, agent_with_llm):
 # --- run_check_cycle ---
 
 
-@patch("agent.core.execute_mgrctl_inspection", return_value="Mocked State")
-@patch("agent.core.fetch_node_load", return_value=3.0)
-def test_run_check_cycle_triggers_alert(mock_fetch, mock_exec, agent):
-    # Load is 3.0, threshold is 2.0 -> should trigger alert and execution.
-    # No LLM key on this agent, so analyze_with_llm returns raw output (no mock needed).
-    triggered = agent.run_check_cycle()
+@patch("agent.core.run_investigation", return_value="Mocked RCA")
+@patch("agent.core.evaluate_metrics", return_value=[
+    Anomaly(minion_id="test-minion", metric_name="load", current_value=3.0,
+            threshold=2.0, scenario="high_cpu", severity="warning")
+])
+def test_run_check_cycle_triggers_alert(mock_evaluate, mock_investigate, agent):
+    # evaluate_metrics returns one anomaly -> run_check_cycle should return it.
+    anomaly, rca = agent.run_check_cycle()
 
-    assert triggered is True
-    mock_exec.assert_called_once_with("test-minion")
+    assert anomaly is not None
+    assert rca == "Mocked RCA"
+    mock_evaluate.assert_called_once_with(agent.prometheus_url, agent.minion_id)
+    mock_investigate.assert_called_once()
 
 
-@patch.object(UyuniAIAgent, "analyze_with_llm", return_value="AI RCA summary")
-@patch("agent.core.execute_mgrctl_inspection", return_value="Raw ps output")
-@patch("agent.core.fetch_node_load", return_value=3.0)
-def test_run_check_cycle_calls_llm_analysis(mock_fetch, mock_exec, mock_analyze, agent_with_llm):
-    # When load exceeds threshold, analyze_with_llm must be called with the inspection output.
-    triggered = agent_with_llm.run_check_cycle()
+@patch("agent.core.run_investigation", return_value="AI RCA summary")
+@patch("agent.core.evaluate_metrics", return_value=[
+    Anomaly(minion_id="test-minion", metric_name="load", current_value=3.0,
+            threshold=2.0, scenario="high_cpu", severity="warning")
+])
+def test_run_check_cycle_calls_llm_analysis(mock_evaluate, mock_investigate, agent_with_llm):
+    # run_investigation is called with the anomaly and the agent's API key.
+    anomaly, rca = agent_with_llm.run_check_cycle()
 
-    assert triggered is True
-    mock_analyze.assert_called_once_with("Raw ps output", scenario="high_cpu")
+    assert anomaly is not None
+    assert rca == "AI RCA summary"
+    mock_investigate.assert_called_once_with(anomaly, agent_with_llm._llm_api_key)

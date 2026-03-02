@@ -1,10 +1,10 @@
 import logging
 import requests
-from typing import Optional
+from typing import Optional, Tuple
 
-from agent.metrics import fetch_node_load
+from agent.evaluator import Anomaly, evaluate_metrics
+from agent.ai_agent import run_investigation
 from agent.prompts import build_prompt, load_prompt
-from agent.tools import execute_mgrctl_inspection
 
 logger = logging.getLogger(__name__)
 
@@ -78,16 +78,17 @@ class UyuniAIAgent:
             logger.error(f"LLM analysis failed: {safe_msg}. Falling back to raw output.")
             return raw_output
 
-    def run_check_cycle(self) -> bool:
-        """Runs a single monitoring and inspection cycle. Returns True if alert triggered."""
-        load = fetch_node_load(self.prometheus_url, self.minion_id)
-        if load is not None:
-            logger.info(f"Current node_load1: {load}")
-            if load > self.threshold:
-                logger.warning(f"ALERT: Load ({load}) exceeds threshold ({self.threshold})!")
-                state = execute_mgrctl_inspection(self.minion_id)
-                logger.info(f"System State Gathered:\n{state}")
-                analysis = self.analyze_with_llm(state, scenario="high_cpu")
-                logger.info(f"AI Root Cause Analysis:\n{analysis}")
-                return True
-        return False
+    def run_check_cycle(self) -> Tuple[Optional[Anomaly], Optional[str]]:
+        """Runs a single monitoring and inspection cycle.
+
+        Delegates to evaluate_metrics() + run_investigation() for multi-metric
+        evaluation via the agentic tool-use loop. Returns the first detected
+        anomaly and its RCA, or (None, None) when no threshold is breached.
+        """
+        anomalies = evaluate_metrics(self.prometheus_url, self.minion_id)
+        if not anomalies:
+            return None, None
+        anomaly = anomalies[0]
+        rca = run_investigation(anomaly, self._llm_api_key)
+        logger.info("RCA for %s/%s:\n%s", anomaly.minion_id, anomaly.metric_name, rca)
+        return anomaly, rca

@@ -122,6 +122,28 @@ def test_build_prompt_raises_on_missing_context_key():
 # --- Integration: new scenario prompt files exist ---
 
 
+def test_high_load_prompt_exists():
+    """Ensures the shipped high_load.md prompt file is loadable."""
+    result = load_prompt("high_load.md")
+    assert len(result) > 0
+    assert "Load Average" in result
+    assert "load" in result.lower()
+
+
+def test_build_prompt_high_load():
+    result = build_prompt("high_load", {
+        "minion_id": "app01.mgr.suse.de",
+        "metric_value": "8.5",
+        "threshold": "2.0",
+        "raw_output": "PID PPID COMM %CPU STAT\n1234 1 salt-minion 0.5 D",
+    })
+    assert "app01.mgr.suse.de" in result
+    assert "8.5" in result
+    assert "2.0" in result
+    assert "{minion_id}" not in result
+    assert "--- END OUTPUT ---" in result
+
+
 def test_high_apache_load_prompt_exists():
     """Ensures the shipped high_apache_load.md prompt file is loadable."""
     result = load_prompt("high_apache_load.md")

@@ -72,7 +72,7 @@ DEFAULT_THRESHOLDS: List[MetricThreshold] = [
         metric_name="load",
         fetch_fn=fetch_node_load,
         default_threshold=2.0,
-        scenario="high_cpu",  # No dedicated high_load.md yet
+        scenario="high_load",
     ),
     MetricThreshold(
         metric_name="apache_workers",
